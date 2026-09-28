@@ -7,7 +7,6 @@
 [![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Selenium](https://img.shields.io/badge/Selenium-4.x-43B02A?style=for-the-badge&logo=selenium&logoColor=white)](https://www.selenium.dev/)
 [![Shodan](https://img.shields.io/badge/Shodan-OSINT-1F72D9?style=for-the-badge)](https://www.shodan.io/)
-[![Demo](https://shields.io)](https://pythonanywhere.com)
 [![License](https://img.shields.io/badge/License-MIT-000000?style=for-the-badge)](LICENSE)
 
 **Автоматизация сбора разведывательных данных для картирования IoT-устройств по географическим регионам через публичный поисковый индекс Shodan.**
