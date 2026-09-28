@@ -1,125 +1,127 @@
+<div align="center">
+
 # 🌐 Shodaner
 
-### Automated Shodan OSINT Scanner — IoT Device Metadata Aggregator
+### Автоматизированный OSINT-сканер Shodan — сбор метаданных IoT-устройств
 
 [![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Selenium](https://img.shields.io/badge/Selenium-4.x-43B02A?style=for-the-badge&logo=selenium&logoColor=white)](https://www.selenium.dev/)
 [![Shodan](https://img.shields.io/badge/Shodan-OSINT-1F72D9?style=for-the-badge)](https://www.shodan.io/)
 [![License](https://img.shields.io/badge/License-MIT-000000?style=for-the-badge)](LICENSE)
 
-**Passive intelligence-gathering automation for mapping IoT device footprints across geographic regions using Shodan's public search index.**
+**Автоматизация сбора разведывательных данных для картирования IoT-устройств по географическим регионам через публичный поисковый индекс Shodan.**
 
-Built for security researchers, penetration testers, and network asset auditors who need structured, reproducible device metadata collection.
+Создан для специалистов по безопасности, пентестеров и аудиторов сетевых активов, которым нужен структурированный и воспроизводимый сбор метаданных.
 
 </div>
 
 ---
 
-## 📖 Table of Contents
+## 📖 Содержание
 
-- [Overview](#-overview)
-- [How It Works](#-how-it-works)
-- [Requirements](#-requirements)
-- [Installation](#-installation)
-- [Configuration](#-configuration)
-- [Usage](#-usage)
-- [Output Format](#-output-format)
-- [Search Modifiers](#-search-modifiers)
-- [Chromium Profile](#-chromium-profile)
-- [Troubleshooting](#-troubleshooting)
-- [Pipeline Integration](#-pipeline-integration)
-- [Legal](#-legal)
-
----
-
-## 🔍 Overview
-
-Shodaner automates the process of querying [Shodan](https://www.shodan.io/) — the world's largest search engine for internet-connected devices — and collects structured metadata about specific IoT device models across user-defined geographic regions.
-
-Instead of manually searching each product/country combination through the web interface, Shodaner:
-
-1. **Authenticates** into Shodan using your existing Google-linked account
-2. **Iterates** through a configurable list of device products × countries
-3. **Extracts** serial number patterns and indexing timestamps from result pages
-4. **Deduplicates** entries by 4-character prefix to reduce noise
-5. **Exports** everything to a clean `results.txt` file
-
-### What Shodaner does:
-
-| Capability | Description |
-|:-----------|:------------|
-| Multi-region scanning | Batch ISO country codes (RU, UA, US, DE, etc.) |
-| Product filtering | Pre-configured list of Dahua IPC camera families |
-| Serial extraction | Truncates to 10-character prefix for pattern analysis |
-| Age calculation | Computes "days since last indexed" for each record |
-| Auto-deduplication | Removes duplicate 4-character serial prefixes |
-| Profile isolation | Clones Chrome profile to avoid corrupting daily-use data |
-
-### What Shodaner does NOT do:
-
-- ❌ Does not connect to any device
-- ❌ Does not attempt authentication on devices
-- ❌ Does not exploit vulnerabilities
-- ❌ Does not interact with anything beyond Shodan's public web interface
-- ✅ Only reads data already publicly indexed by Shodan
+- [Обзор](#-обзор)
+- [Как работает](#-как-работает)
+- [Требования](#-требования)
+- [Установка](#-установка)
+- [Конфигурация](#-конфигурация)
+- [Запуск](#-запуск)
+- [Формат вывода](#-формат-вывода)
+- [Модификаторы поиска](#-модификаторы-поиска)
+- [Профиль Chrome](#-профиль-chrome)
+- [Решение проблем](#-решение-проблем)
+- [Интеграция в пайплайн](#-интеграция-в-пайплайн)
+- [Правовая информация](#-правовая-информация)
 
 ---
 
-## ⚙️ How It Works
+## 🔍 Обзор
+
+Shodaner автоматизирует процесс запросов к [Shodan](https://www.shodan.io/) — крупнейшей поисковой системе для подключённых к интернету устройств — и собирает структурированные метаданные о конкретных моделях IoT-устройств по выбранным регионам.
+
+Вместо ручного перебора каждой комбинации «продукт × страна» через веб-интерфейс, Shodaner:
+
+1. **Авторизуется** на Shodan через ваш Google-аккаунт
+2. **Итерирует** по настраиваемому списку продуктов × стран
+3. **Извлекает** паттерны серийных номеров и временные метки из страниц результатов
+4. **Дедуплицирует** записи по 4-символьному префиксу для снижения шума
+5. **Экспортирует** всё в чистый файл `results.txt`
+
+### Что делает Shodaner:
+
+| Возможность | Описание |
+|:------------|:---------|
+| Мультирегиональное сканирование | Пакетный ввод ISO-кодов стран (RU, UA, US, DE и т.д.) |
+| Фильтрация по продуктам | Преднастроенный список семейств камер Dahua IPC |
+| Извлечение серийников | Обрезка до 10-символьного префикса для анализа паттернов |
+| Расчёт возраста | Вычисляет «дней с момента последней индексации» для каждой записи |
+| Автодедупликация | Удаление дублей по 4-символьному префиксу серийника |
+| Изоляция профиля | Клонирование профиля Chrome для защиты ваших рабочих данных |
+
+### Что Shodaner НЕ делает:
+
+- ❌ Не подключается к устройствам
+- ❌ Не пытается авторизоваться на устройствах
+- ❌ Не эксплуатирует уязвимости
+- ❌ Не взаимодействует ни с чем, кроме публичного веб-интерфейса Shodan
+- ✅ Читает только данные, уже проиндексированные Shodan публично
+
+---
+
+## ⚙️ Как работает
 
 ```
 ┌──────────────────┐       ┌──────────────────┐       ┌──────────────────┐
-│   User Input     │       │   Chrome Clone   │       │   Shodan.io      │
+│   Ввод данных    │       │  Клон Chrome     │       │   Shodan.io      │
 │                  │       │                  │       │                  │
-│  ISO Codes:      │──────▶│  Selenium takes  │──────▶│  Login via       │
-│  "UA, KZ, RU"    │       │  control of a    │       │  Google OAuth    │
-│                  │       │  cloned profile  │       │                  │
+│  ISO-коды:       │──────▶│  Selenium берёт  │──────▶│  Вход через      │
+│  "UA, KZ, RU"    │       │  контроль над    │       │  Google OAuth    │
+│                  │       │  клоном профиля  │       │                  │
 └──────────────────┘       └──────────────────┘       └────────┬─────────┘
                                                                │
                                                                ▼
 ┌──────────────────┐       ┌──────────────────┐       ┌──────────────────┐
-│   results.txt    │◀──────│  Parse & Filter  │◀──────│  Search Results  │
-│                  │       │                  │       │                  │
-│  Product [Date]  │       │  Regex extracts  │       │  Serial numbers  │
-│  → Serial: XXXX  │       │  SN + timestamp  │       │  + timestamps    │
+│   results.txt    │◀──────│  Парсинг и       │◀──────│  Результаты      │
+│                  │       │  фильтрация      │       │  поиска          │
+│  Продукт [Дата]  │       │  Regex извлекает │       │  Серийники       │
+│  → Serial: XXXX  │       │  SN + метку      │       │  + метки времени │
 └──────────────────┘       └──────────────────┘       └──────────────────┘
 ```
 
-**Automation pipeline:**
+**Пайплайн автоматизации:**
 
 ```
-[1/7] Detect Chrome profile
-[2/7] Clone profile (isolated sandbox)
-[3/7] Launch Chrome (Selenium-controlled)
-[4/7] Navigate to Shodan
-[5/7] Authenticate via Google OAuth
-[6/7] Execute search loop (product × country)
-[7/7] Deduplicate prefixes → save results
+[1/7] Определение профиля Chrome
+[2/7] Клонирование профиля (изолированная песочница)
+[3/7] Запуск Chrome (под управлением Selenium)
+[4/7] Переход на Shodan
+[5/7] Авторизация через Google OAuth
+[6/7] Цикл поиска (продукт × страна)
+[7/7] Дедупликация префиксов → сохранение результатов
 ```
 
 ---
 
-## 📋 Requirements
+## 📋 Требования
 
-| Component | Version | Purpose |
-|:----------|:--------|:--------|
-| Python | 3.8+ | Runtime |
-| Google Chrome | latest | Selenium-compatible browser |
-| ChromeDriver | matching | WebDriver automation layer |
-| Shodan account | free tier | Access to search interface |
-| Google account | — | OAuth login for Shodan |
-| Internet | — | Stable connection recommended |
+| Компонент | Версия | Назначение |
+|:----------|:-------|:-----------|
+| Python | 3.8+ | Среда выполнения |
+| Google Chrome | latest | Браузер для Selenium |
+| ChromeDriver | соответствующий | WebDriver для автоматизации |
+| Аккаунт Shodan | free | Доступ к поиску |
+| Google-аккаунт | — | OAuth-вход для Shodan |
+| Интернет | — | Стабильное соединение |
 
 ---
 
-## 🔧 Installation
+## 🔧 Установка
 
 ```bash
-# Clone the repository
+# Клонируем репозиторий
 git clone https://github.com/therample/Shodaner.git
 cd Shodaner
 
-# Install Python dependencies
+# Устанавливаем зависимости
 pip install -r requirements.txt
 ```
 
@@ -128,44 +130,44 @@ pip install -r requirements.txt
 selenium>=4.10.0
 ```
 
-> ⚠️ Ensure your ChromeDriver version matches your Chrome browser version. The tool will raise a descriptive error if there's a mismatch.
+> ⚠️ Убедитесь, что версия ChromeDriver соответствует версии Chrome. Инструмент выдаст подробную ошибку при несовпадении.
 
 ---
 
-## ⚙️ Configuration
+## ⚙️ Конфигурация
 
-Open `shodaner.py` and locate the configuration block:
+Откройте `shodaner.py` и найдите блок настроек:
 
 ```python
-# ─── Configuration ───
+# ─── Конфигурация ───
 
-GOOGLE_EMAIL = "your_email@gmail.com"
-GOOGLE_PASSWORD = "your_password"
+GOOGLE_EMAIL = "ваша_почта@gmail.com"
+GOOGLE_PASSWORD = "ваш_пароль"
 
 BASE_PRODUCTS = [
     'product:"Dahua IPC-C15"',
     'product:"Dahua IPC-A35"',
     'product:"Dahua IPC-K15"',
-    # ... add your own
+    # ... добавьте свои
 ]
 
 TARGET_CODE_WORD = "Serial Number"
 OUTPUT_FILE = "results.txt"
 ```
 
-### Parameters
+### Параметры
 
-| Variable | Type | Description |
-|:---------|:-----|:------------|
-| `GOOGLE_EMAIL` | `str` | Google account email for Shodan OAuth |
-| `GOOGLE_PASSWORD` | `str` | Google account password |
-| `BASE_PRODUCTS` | `list[str]` | Shodan search queries (product filters) |
-| `TARGET_CODE_WORD` | `str` | Keyword to extract from results (default: `"Serial Number"`) |
-| `OUTPUT_FILE` | `str` | Output path (default: `results.txt`) |
+| Переменная | Тип | Описание |
+|:-----------|:----|:----------|
+| `GOOGLE_EMAIL` | `str` | Email Google-аккаунта для OAuth |
+| `GOOGLE_PASSWORD` | `str` | Пароль Google-аккаунта |
+| `BASE_PRODUCTS` | `list[str]` | Поисковые запросы Shodan (фильтры продуктов) |
+| `TARGET_CODE_WORD` | `str` | Ключевое слово для извлечения (по умолчанию: `"Serial Number"`) |
+| `OUTPUT_FILE` | `str` | Путь к файлу результатов (по умолчанию: `results.txt`) |
 
-### Adding Custom Products
+### Добавление своих продуктов
 
-Any valid [Shodan search filter](https://help.shodan.io/the-basics/search-query-fundamentals) works:
+Поддерживается любой валидный [фильтр поиска Shodan](https://help.shodan.io/the-basics/search-query-fundamentals):
 
 ```python
 BASE_PRODUCTS = [
@@ -173,101 +175,101 @@ BASE_PRODUCTS = [
     'product:"Hikvision DS-2CD"',
     'product:"Generic P2P Camera"',
     'port:37777',
-    # Anything Shodan supports...
+    # Всё, что поддерживает Shodan...
 ]
 ```
 
 ---
 
-## 🚀 Usage
+## 🚀 Запуск
 
-### Basic Run
+### Базовый запуск
 
 ```bash
 python shodaner.py
 ```
 
-The tool will prompt for ISO country codes interactively:
+Инструмент интерактивно запросит ISO-коды стран:
 
 ```
-┌── Region Selection ──
-│ Enter ISO codes separated by commas (e.g., UA, US, PL, DE)
+┌── Выбор регионов ──
+│ Введите ISO-коды через запятую (например: UA, US, PL, DE)
 └── ➔ RU, KZ, UA
 
-[*] Target regions: [RU, KZ, UA]
+[*] Целевые регионы: [RU, KZ, UA]
 
-[1/7] Detecting Chrome profile...
-[2/7] Cloning profile to sandbox...
-[3/7] Launching Chrome...
-[4/7] Opening shodan.io...
-[5/7] Authenticating via Google...
-[6/7] Executing search queries...
-[7/7] Deduplicating prefixes...
-[+] All items processed (145.3s)
+[1/7] Определяю профиль Chrome...
+[2/7] Клонирую профиль...
+[3/7] Запускаю Chrome...
+[4/7] Открываю shodan.io...
+[5/7] Авторизуюсь через Google...
+[6/7] Выполняю поисковые запросы...
+[7/7] Дедуплицирую префиксы...
+[+] Все элементы обработаны (145.3с)
 ```
 
-### Command-Line Arguments
+### Аргументы командной строки
 
 ```bash
 python shodaner.py --help
 ```
 
-| Flag | Default | Description |
-|:-----|:--------|:------------|
-| `--user-data-dir` | auto-detected | Chrome User Data directory path |
-| `--profile-dir` | auto-detected | Chrome profile folder (e.g., `Default`, `Profile 1`) |
-| `--verbose` | off | Show full stack traces on errors |
+| Флаг | По умолчанию | Описание |
+|:-----|:-------------|:---------|
+| `--user-data-dir` | авто | Путь к User Data Chrome |
+| `--profile-dir` | авто | Папка профиля (например, `Default`, `Profile 1`) |
+| `--verbose` | выкл | Полные трейсбеки при ошибках |
 
-### Advanced Usage
+### Продвинутый запуск
 
 ```bash
-# Use a specific Chrome profile
+# Использовать конкретный профиль
 python shodaner.py --profile-dir "Profile 2"
 
-# Use a custom Chrome installation
+# Указать свою директорию Chrome
 python shodaner.py --user-data-dir "D:\ChromeBackup\User Data"
 
-# Debug mode with full tracebacks
+# Режим отладки
 python shodaner.py --verbose
 ```
 
 ---
 
-## 📤 Output Format
+## 📤 Формат вывода
 
-Results are appended to `results.txt` in a structured, human-readable format:
+Результаты добавляются в `results.txt` в структурированном виде:
 
 ```
-product:"Dahua IPC-C15" country:"RU" [Date: 2024-01-15 | Age: today] -> Serial Number: ABCDEF1234
-product:"Dahua IPC-A35" country:"UA" [Date: 2024-01-14 | Age: yesterday] -> Serial Number: F1E2D3A456
-product:"Dahua IPC-K15" country:"KZ" [Date: 2024-01-10 | Age: 5 days ago] -> Serial Number: 123456A789
+product:"Dahua IPC-C15" country:"RU" [Дата: 2024-01-15 | Возраст: сегодня] -> Serial Number: ABCDEF1234
+product:"Dahua IPC-A35" country:"UA" [Дата: 2024-01-14 | Возраст: вчера] -> Serial Number: F1E2D3A456
+product:"Dahua IPC-K15" country:"KZ" [Дата: 2024-01-10 | Возраст: 5 дн. назад] -> Serial Number: 123456A789
 ```
 
-### Fields
+### Поля
 
-| Field | Source | Description |
-|:------|:-------|:------------|
-| Product query | input | Original Shodan search string |
-| Country | ISO code | Region where device was indexed |
-| Date | Shodan | When the record was last updated |
-| Age | calculated | Human-readable time since indexing |
-| Serial Number | extracted | First 10 characters of the SN |
+| Поле | Источник | Описание |
+|:-----|:---------|:----------|
+| Продукт | ввод | Исходная поисковая строка |
+| Страна | ISO-код | Регион, где найдено устройство |
+| Дата | Shodan | Когда запись была обновлена |
+| Возраст | вычисляется | Читаемое время с момента индексации |
+| Serial Number | извлечение | Первые 10 символов серийного номера |
 
-### Age Labels
+### Метки возраста
 
-| Label | Meaning |
-|:------|:--------|
-| `today` | Indexed within the current day |
-| `yesterday` | Indexed 1 day ago |
-| `N days ago` | Indexed N days ago |
+| Метка | Значение |
+|:------|:---------|
+| `сегодня` | Проиндексировано в текущий день |
+| `вчера` | Проиндексировано 1 день назад |
+| `N дн. назад` | Проиндексировано N дней назад |
 
-> 💡 **Tip:** Freshly indexed records (today/yesterday) are more likely to reflect currently active devices.
+> 💡 **Совет:** Свежие записи (сегодня/вчера) с большей вероятностью отражают активные устройства.
 
 ---
 
-## 🌍 Search Modifiers
+## 🌍 Модификаторы поиска
 
-Shodaner builds search queries by combining `BASE_PRODUCTS` with country filters:
+Shodaner строит запросы, комбинируя `BASE_PRODUCTS` с фильтрами стран:
 
 ```
 product:"Dahua IPC-C15" country:"RU"
@@ -277,41 +279,41 @@ product:"Dahua IPC-A35" country:"RU"
 ...
 ```
 
-If you enter **3 regions** and have **11 products**, the tool executes **33 searches** sequentially.
+Если вы введёте **3 региона** и у вас **11 продуктов**, инструмент выполнит **33 запроса** последовательно.
 
-### Supported ISO 3166-1 alpha-2 Codes
+### Поддерживаемые ISO 3166-1 alpha-2 коды
 
 <details>
-<summary><b>📋 Expand to see popular codes</b></summary>
+<summary><b>📋 Развернуть список популярных кодов</b></summary>
 
-| Code | Country | Code | Country | Code | Country |
-|:----:|:--------|:----:|:--------|:----:|:--------|
-| RU | Russia | US | United States | CN | China |
-| UA | Ukraine | KZ | Kazakhstan | DE | Germany |
-| FR | France | GB | United Kingdom | BR | Brazil |
-| IN | India | TR | Turkey | ID | Indonesia |
-| TH | Thailand | VN | Vietnam | MX | Mexico |
-| AR | Argentina | PL | Poland | IT | Italy |
-| ES | Spain | NL | Netherlands | BY | Belarus |
+| Код | Страна | Код | Страна | Код | Страна |
+|:---:|:-------|:---:|:-------|:---:|:-------|
+| RU | Россия | US | США | CN | Китай |
+| UA | Украина | KZ | Казахстан | DE | Германия |
+| FR | Франция | GB | Великобритания | BR | Бразилия |
+| IN | Индия | TR | Турция | ID | Индонезия |
+| TH | Тайланд | VN | Вьетнам | MX | Мексика |
+| AR | Аргентина | PL | Польша | IT | Италия |
+| ES | Испания | NL | Нидерланды | BY | Беларусь |
 
-Full reference: [ISO 3166-1 alpha-2](https://en.wikipedia.org/wiki/ISO_3166-1_alpha-2)
+Полный список: [ISO 3166-1 alpha-2](https://ru.wikipedia.org/wiki/ISO_3166-1_alpha-2)
 
 </details>
 
 ---
 
-## 🧬 Chromium Profile
+## 🧬 Профиль Chrome
 
-Shodaner clones your Chrome profile into an isolated temporary directory before launching. This means:
+Shodaner клонирует ваш профиль Chrome в изолированную временную директорию перед запуском. Это означает:
 
-- ✅ Your daily-use Chrome profile stays untouched
-- ✅ No conflicts with concurrently running Chrome instances
-- ✅ Bookmarks, history, and extensions are preserved in the clone
-- ✅ Heavy directories (caches, extensions, GPU data) are excluded for speed
+- ✅ Ваш рабочий профиль Chrome остаётся нетронутым
+- ✅ Нет конфликтов с параллельно запущенным Chrome
+- ✅ Закладки, история и расширения сохраняются в клоне
+- ✅ Тяжёлые директории (кэши, расширения, GPU-данные) исключаются для скорости
 
-### Excluded Directories (Optimization)
+### Исключаемые директории (оптимизация)
 
-The following directories are skipped during cloning to reduce copy time:
+Следующие директории пропускаются при клонировании:
 
 ```
 Cache, Code Cache, GPUCache, Service Worker, blob_storage,
@@ -321,71 +323,71 @@ ShaderCache, DawnCache, Media Cache, Extensions, Crashpad, ...
 
 ---
 
-## 🐛 Troubleshooting
+## 🐛 Решение проблем
 
 <details>
-<summary><b>Chrome won't launch</b></summary>
+<summary><b>Chrome не запускается</b></summary>
 
 ```
-[x] Failed to launch managed Chrome.
+[x] Не удалось запустить управляемый Chrome.
 ```
 
-**Solutions:**
-1. Verify ChromeDriver version matches your Chrome version
-2. Check if antivirus/EDR is blocking Selenium
-3. Ensure write permissions on temp directory
-4. Run with `--verbose` for full error details
+**Решения:**
+1. Проверьте соответствие версий ChromeDriver и Chrome
+2. Проверьте, не блокирует ли антивирус/EDR Selenium
+3. Убедитесь в наличии прав на запись во временную папку
+4. Запустите с `--verbose` для полной ошибки
 
 </details>
 
 <details>
-<summary><b>Login not working</b></summary>
+<summary><b>Логин не работает</b></summary>
 
 ```
-[x] Didn't find Google button — waiting, maybe you can click manually...
+[x] Кнопку Google не нашёл — жду, вдруг вы кликнете сами...
 ```
 
-**Solutions:**
-1. Shodan may have changed their login UI — click manually
-2. Clear Shodan cookies and retry
-3. Verify your Google account doesn't have 2FA prompts blocking automation
-4. Check if your account is locked/suspended
+**Решения:**
+1. Shodan мог изменить интерфейс входа — кликните вручную
+2. Очистите куки Shodan и повторите
+3. Проверьте, не блокирует ли 2FA автоматизацию
+4. Проверьте, не заблокирован ли аккаунт
 
 </details>
 
 <details>
-<summary><b>Pages loading slowly / hanging</b></summary>
+<summary><b>Страницы грузятся медленно / зависают</b></summary>
 
-**Cause:** OS reduces Chrome priority when the window is minimized.
+**Причина:** ОС снижает приоритет Chrome при сворачивании окна.
 
-**Solutions:**
-1. Keep both the terminal and Chrome window in the foreground
-2. Don't run bandwidth-heavy tasks simultaneously (downloads, streams)
-3. Reduce the number of simultaneous countries
-4. Check your internet connection stability
-
-</details>
-
-<details>
-<summary><b>No results found</b></summary>
-
-```
-[x] Nothing found on the results page for '...'
-```
-
-**Possible causes:**
-1. No matching devices in the selected country
-2. Shodan hasn't indexed devices with that product in that region recently
-3. The product name in `BASE_PRODUCTS` is misspelled
-
-**Try:** Verifying your query manually on shodan.io first
+**Решения:**
+1. Держите терминал и окно Chrome на переднем плане
+2. Не запускайте тяжёлые задачи параллельно (загрузки, стримы)
+3. Уменьшите количество стран
+4. Проверьте стабильность интернета
 
 </details>
 
 <details>
-<summary><b>Zombie Chrome processes after exit</b></summary>
+<summary><b>Результатов нет</b></summary>
 
-Shodaner automatically executes `taskkill` (Windows) or `pkill` (Linux/Mac) on exit. If processes persist:
+```
+[x] На странице результатов ничего не найдено.
+```
+
+**Возможные причины:**
+1. Нет устройств в выбранной стране
+2. Shodan не индексировал устройства этого продукта в регионе
+3. Опечатка в названии продукта в `BASE_PRODUCTS`
+
+**Попробуйте:** проверить запрос вручную на shodan.io
+
+</details>
+
+<details>
+<summary><b>Зомби-процессы Chrome после выхода</b></summary>
+
+Shodaner автоматически выполняет `taskkill` (Windows) или `pkill` (Linux/Mac) при выходе. Если процессы остались:
 
 ```bash
 # Windows
@@ -401,88 +403,101 @@ pkill -f chrome
 
 ---
 
-## 🔗 Pipeline Integration
+## 🔗 Интеграция в пайплайн
 
-Shodaner is designed as **Stage 1** of a three-stage research pipeline:
+Shodaner разработан как **Этап 1** трёхэтапного пайплайна исследования:
 
-| Stage | Tool | Input | Output |
-|:------|:-----|:------|:-------|
-| 1️⃣ | **Shodaner** | ISO codes | `results.txt` (prefixes) |
-| 2️⃣ | [Krushitel](https://github.com/undervolter/krushitel) | `results.txt` | Validated serial numbers |
-| 3️⃣ | [P2PWN](https://github.com/thebadinteger/p2pwn) | Validated SNs | Audit reports (XML) |
-
----
-
-## ⚠️ Operational Notes
-
-1. **Do not minimize** the terminal or Chrome window during operation
-2. **Do not run** other bandwidth-heavy applications concurrently
-3. **Scan duration** scales linearly: more regions = more time
-4. **Free Shodan accounts** may encounter rate limits — the tool handles retries automatically
-5. **Google 2FA** may require manual intervention on first login
-6. **Window size** is set to 800×600 for optimal Shodan rendering
+| Этап | Инструмент | Вход | Выход |
+|:-----|:-----------|:-----|:------|
+| 1️⃣ | **Shodaner** | ISO-коды | `results.txt` (префиксы) |
+| 2️⃣ | [Krushitel](https://github.com/undervolter/krushitel) | `results.txt` | Валидированные серийники |
+| 3️⃣ | [P2PWN](https://github.com/thebadinteger/p2pwn) | Валидные SN | Отчёты аудита (XML) |
 
 ---
 
-## 🤝 Contributing
+## ⚠️ Эксплуатационные заметки
+
+1. **Не сворачивайте** терминал или окно Chrome во время работы
+2. **Не запускайте** другие тяжёлые приложения параллельно
+3. **Время сканирования** растёт линейно: больше регионов = дольше
+4. **Free-аккаунт Shodan** может иметь лимиты — инструмент обрабатывает их автоматически
+5. **Google 2FA** может потребовать ручного вмешательства при первом входе
+6. **Размер окна** установлен на 800×600 для оптимального рендеринга Shodan
+
+---
+
+## 🤝 Вклад в проект
 
 ```bash
 # Fork → Branch → Commit → Push → Pull Request
-git checkout -b feature/new-capability
-git commit -m "Add: new capability"
-git push origin feature/new-capability
+git checkout -b feature/новая-функция
+git commit -m "Add: новая функция"
+git push origin feature/новая-функция
 ```
 
-### Ideas for Contributions
+### Идеи для контрибуции
 
-- [ ] Headless mode (`--headless` flag)
-- [ ] API-based mode (bypass Selenium using Shodan API key)
-- [ ] Custom output formats (CSV, JSON, XML)
-- [ ] Rate limiting configuration
-- [ ] Proxy support
-- [ ] Docker containerization
+- [ ] Headless-режим (`--headless`)
+- [ ] API-режим (обход Selenium через API-ключ Shodan)
+- [ ] Форматы вывода (CSV, JSON, XML)
+- [ ] Настройка rate limiting
+- [ ] Поддержка прокси
+- [ ] Docker-контейнеризация
 
 ---
 
-## 📜 License
+## 📜 Лицензия
 
 ```
 MIT License
 
 Copyright (c) 2026
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Данная лицензия разрешает лицам, получившим копию данного программного
+обеспечения и сопутствующей документации, безвозмездно использовать,
+копировать, изменять, объединять, публиковать, распространять,
+сублицензировать и продавать копии данного программного обеспечения,
+а также разрешать лицам, которым предоставляется данное программное
+обеспечение, делать то же самое при соблюдении следующих условий:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Уведомление об авторских правах и данное уведомление о лицензии
+должны быть включены во все копии или существенные части программного
+обеспечения.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+ДАННОЕ ПРОГРАММНОЕ ОБЕСПЕЧЕНИЕ ПРЕДОСТАВЛЯЕТСЯ «КАК ЕСТЬ», БЕЗ ГАРАНТИЙ
+ЛЮБОГО РОДА, ЯВНЫХ ИЛИ ПОДРАЗУМЕВАЕМЫХ, ВКЛЮЧАЯ, НО НЕ ОГРАНИЧИВАЯСЬ
+ГАРАНТИЯМИ ТОВАРНОЙ ПРИГОДНОСТИ, ПРИГОДНОСТИ ДЛЯ КОНКРЕТНОЙ ЦЕЛИ
+И НЕНАРУШЕНИЯ ПРАВ. НИ ПРИ КАКИХ ОБСТОЯТЕЛЬСТВАХ АВТОРЫ ИЛИ
+ПРАВООБЛАДАТЕЛИ НЕ НЕСУТ ОТВЕТСТВЕННОСТИ ПО ИСКАМ О ВОЗМЕЩЕНИИ
+УЩЕРБА, УБЫТКОВ ИЛИ ДРУГИХ ТРЕБОВАНИЙ ПО ДЕЙСТВУЮЩИМ ДОГОВОРАМ
+ИЛИ ИНЫМ ОБСТОЯТЕЛЬСТВАМ, ВОЗНИКШИМ ИЗ, ИМЕЮЩИМ ПРИЧИНОЙ ИЛИ
+СВЯЗАННЫМ С ПРОГРАММНЫМ ОБЕСПЕЧЕНИЕМ ИЛИ ИСПОЛЬЗОВАНИЕМ ИЛИ ИНЫМИ
+ДЕЙСТВИЯМИ С ПРОГРАММНЫМ ОБЕСПЕЧЕНИЕМ.
 ```
 
 ---
 
-## ⚖️ Legal & Ethics
+## ⚖️ Правовая информация
 
-This tool accesses **only publicly available data** indexed by Shodan. It does not interact with, connect to, or authenticate against any device.
+Данный инструмент обращается **только к публично доступным данным**, проиндексированным Shodan. Он не взаимодействует, не подключается и не авторизуется на устройствах.
 
-Users are responsible for:
+Пользователи несут ответственность за:
 
-- Compliance with their local laws and regulations
-- Compliance with Shodan's Terms of Service
-- Compliance with Google's Terms of Service
-- Ethical use of collected data
+- Соблюдение законов и нормативных актов своей юрисдикции
+- Соблюдение Условий использования Shodan
+- Соблюдение Условий использования Google
+- Этичное использование собранных данных
 
-**Intended for:** authorized security research, penetration testing, academic study, and network asset management.
+**Предназначен для:** авторизованных исследований в области безопасности, пентестинга, академических исследований и управления сетевыми активами.
 
-**Not intended for:** unauthorized access, harassment, stalking, or any activity that violates laws in your jurisdiction.
+**Не предназначен для:** несанкционированного доступа, преследования, или любой деятельности, нарушающей законы вашей юрисдикции.
+
+---
+
+<div align="center">
+
+**Shodaner** — Интеллект по устройствам, автоматизированный.
+
+`@harmonia333`
+
+</div>
