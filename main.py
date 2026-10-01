@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-thx for downloading! 
+thx for downloading!
 """
 
 import argparse
@@ -13,6 +13,7 @@ import sys
 import tempfile
 import time
 import traceback
+import getpass  # Добавлено для безопасного ввода пароля
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -29,13 +30,12 @@ LOGIN_WAIT_SECONDS = 180
 FIND_TIMEOUT = 8       # find timeout trying
 FIND_POLL = 0.25       # DOM
 
-# -------------------------------------------------------------
-# НАСТРОЙКИ: Укажите ваши данные, базовые продукты и кодовое слово
-# -------------------------------------------------------------
-GOOGLE_EMAIL = "EMAIL"
-GOOGLE_PASSWORD = "PASSWORD"  #BE CAREFUL WITH YOUR PASSWORDS
+CONFIG_FILE = "config.json" # Файл для сохранения почты и пароля
 
-# base dahua models
+# -------------------------------------------------------------
+# НАСТРОЙКИ: Базовые продукты и кодовое слово
+# -------------------------------------------------------------
+# Список базовых моделей (страна добавится динамически на основе выбора)
 BASE_PRODUCTS = [
     'product:"Dahua IPC-C15"',
     'product:"Dahua IPC-A35"',
@@ -49,9 +49,13 @@ BASE_PRODUCTS = [
     'product:"Dahua IPC-D26"',
     'product:"Dahua IPC-C46"'
 ]
-TARGET_CODE_WORD = "Serial Number" #test
-OUTPUT_FILE = "results.txt"  # results
+TARGET_CODE_WORD = "Serial Number"
+OUTPUT_FILE = "results.txt"  # Файл, куда будут сохраняться результаты
 # -------------------------------------------------------------
+
+# Глобальные переменные для учетных данных (заполняются в load_or_request_credentials)
+GOOGLE_EMAIL = ""
+GOOGLE_PASSWORD = ""
 
 SKIP_DIRS = {
     "Cache", "Code Cache", "GPUCache", "Service Worker", "blob_storage",
@@ -88,7 +92,38 @@ def step(n, total, msg):
     print(f"\n{C.BOLD}{bar}\n [{n}/{total}] {msg}\n{bar}{C.END}")
 
 
-#regions fix
+# ---------- Функция работы с конфигурацией (запоминание данных) ----------
+
+def load_or_request_credentials():
+    global GOOGLE_EMAIL, GOOGLE_PASSWORD
+    
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                config = json.load(f)
+                GOOGLE_EMAIL = config.get("email", "")
+                GOOGLE_PASSWORD = config.get("password", "")
+                if GOOGLE_EMAIL and GOOGLE_PASSWORD:
+                    log("Учетные данные Google успешно загружены из сохраненного файла конфигурации.", "ok")
+                    return
+        except Exception as e:
+            log(f"Не удалось прочитать файл конфигурации: {e}. Требуется ручной ввод.", "warn")
+
+    print(f"\n{C.BOLD}{C.INFO}┌── Настройка учетных данных Google {C.END}")
+    GOOGLE_EMAIL = input(f"{C.INFO}│{C.END} {C.BOLD}Введите ваш Email от Google:{C.END} ").strip()
+    
+    # Использование getpass маскирует ввод пароля в терминале (он пишется, но его не видно)
+    GOOGLE_PASSWORD = getpass.getpass(f"{C.INFO}└──{C.END} {C.BOLD}Введите ваш Пароль от Google (ввод скрыт):{C.END} ").strip()
+    
+    try:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump({"email": GOOGLE_EMAIL, "password": GOOGLE_PASSWORD}, f, ensure_ascii=False, indent=4)
+        log(f"Учетные данные сохранены в файл '{CONFIG_FILE}' для последующих запусков.", "ok")
+    except Exception as e:
+        log(f"Не удалось сохранить конфигурацию: {e}", "err")
+
+
+# ---------- выбор регионов ----------
 
 def choose_regions() -> list:
     print(f"\n{C.BOLD}{C.INFO}┌── Выбор регионов для сканирования {C.END}")
@@ -123,7 +158,7 @@ def choose_regions() -> list:
 
 import subprocess
 
-def kill_chrome_zombies(): #THX 
+def kill_chrome_zombies():
     """Мгновенно уничтожает все зомби-процессы ChromeDriver и автоматического Chrome
     с помощью быстрых системных утилит."""
     log("Выполняю мгновенную очистку памяти от процессов автоматизации...", "info")
@@ -162,7 +197,7 @@ def remove_duplicate_prefixes():
         seen_prefixes = set()
         unique_lines = []
 
-        #
+        # Регулярка теперь учитывает наличие временной метки в сохраненной строке
         pattern = rf"{re.escape(TARGET_CODE_WORD)}:\s*([A-Za-z0-9_\-]+)"
 
         for line in lines:
@@ -393,12 +428,7 @@ NEXT_BUTTON_SELECTORS = [
     (By.XPATH, "//button[contains(., 'Next')]")
 ]
 
-ACCOUNT_SELECTORS = [
-    (By.CSS_SELECTOR, f"div[data-identifier='{GOOGLE_EMAIL}']"),
-    (By.CSS_SELECTOR, "div[data-identifier]"),
-    (By.CSS_SELECTOR, "li[data-identifier]"),
-    (By.XPATH, "//div[@data-authuser]"),
-]
+# Обновлено: Селектор аккаунта генерируется динамически в функции pick_google_account
 
 SEARCH_SELECTORS = [
     (By.NAME, "query"),
@@ -439,7 +469,7 @@ def click_google(driver) -> bool:
 
 
 def pick_google_account(driver) -> bool:
-    time.sleep(2)
+    time.sleep(1)
     if "accounts.google" not in driver.current_url:
         return False
 
@@ -452,12 +482,18 @@ def pick_google_account(driver) -> bool:
         next_btn = find_first(driver, NEXT_BUTTON_SELECTORS, timeout=3, label="кнопка Далее (Email)")
         if next_btn:
             click(next_btn, driver)
-            time.sleep(3)
+            time.sleep(1.5)
     else:
-        account_el = find_first(driver, ACCOUNT_SELECTORS, timeout=3, label="аккаунт в списке")
+        dynamic_account_selectors = [
+            (By.CSS_SELECTOR, f"div[data-identifier='{GOOGLE_EMAIL}']"),
+            (By.CSS_SELECTOR, "div[data-identifier]"),
+            (By.CSS_SELECTOR, "li[data-identifier]"),
+            (By.XPATH, "//div[@data-authuser]"),
+        ]
+        account_el = find_first(driver, dynamic_account_selectors, timeout=3, label="аккаунт в списке")
         if account_el:
             click(account_el, driver)
-            time.sleep(3)
+            time.sleep(1.5)
 
     password_input = find_first(driver, PASSWORD_INPUT_SELECTORS, timeout=7, label="поле ввода Пароля")
     if password_input:
@@ -480,7 +516,7 @@ def wait_back_on_shodan(driver, timeout=LOGIN_WAIT_SECONDS):
     while time.time() < deadline:
         try:
             if "shodan.io" in driver.current_url and "accounts.google" not in driver.current_url:
-                time.sleep(1.5)
+                time.sleep(1)
                 return True
         except WebDriverException:
             pass
@@ -545,7 +581,7 @@ def process_search_loop(driver, search_items):
         
         if "shodan.io" not in driver.current_url:
             driver.get(SHODAN_URL)
-            time.sleep(2)
+            time.sleep(1)
             
         el = find_first(driver, SEARCH_SELECTORS, label=f"поле поиска для '{item}'")
         if el is None:
@@ -558,7 +594,7 @@ def process_search_loop(driver, search_items):
         el.submit()
         log(f"Отправил поисковый запрос: '{item}'", "ok")
         
-        time.sleep(4)
+        time.sleep(1)
         
         try:
             page_content = driver.page_source
@@ -607,7 +643,7 @@ def process_search_loop(driver, search_items):
             if VERBOSE:
                 traceback.print_exc()
             
-        time.sleep(2)
+        time.sleep(1)
 
 
 def main():
@@ -618,6 +654,9 @@ def main():
     parser.add_argument("--verbose", action="store_true", help="Показывать полный traceback при ошибках")
     args = parser.parse_args()
     VERBOSE = args.verbose
+
+    # Запрашиваем или считываем сохраненные почту и пароль
+    load_or_request_credentials()
 
     selected_regions = choose_regions()
     log(f"Выбранные регионы: {', '.join(selected_regions)}", "ok")
@@ -679,11 +718,12 @@ def main():
             traceback.print_exc()
             
     finally:
+        # Сразу жестко чистим систему без долгих ожиданий драйвера
         kill_chrome_zombies()
+        # Быстрый выход из Python, чтобы не висели другие потоки
         os._exit(0) 
 
 
 
 if __name__ == "__main__":
     main()
-#harmonia333
