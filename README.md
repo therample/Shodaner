@@ -15,7 +15,9 @@
 **по географическим регионам через публичный поисковый индекс Shodan.**
 
 <br/>
+
 [![Guide](https://img.shields.io/badge/Полный_гайд-P2PWN_/_Krushitel_/_Shodaner_(VPN)-1F72D9?style=flat-square)](https://rample.pythonanywhere.com)
+
 <br/>
 
 *Создан для специалистов по безопасности, пентестеров и аудиторов сетевых активов,*
