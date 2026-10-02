@@ -27,15 +27,14 @@ from selenium.common.exceptions import (
 
 SHODAN_URL = "https://www.shodan.io/explore"
 LOGIN_WAIT_SECONDS = 180
-FIND_TIMEOUT = 8       # find timeout trying
-FIND_POLL = 0.25       # DOM
+FIND_TIMEOUT = 5       # было 8
+FIND_POLL = 0.1        # было 0.25
 
 CONFIG_FILE = "config.json" # Файл для сохранения почты и пароля
 
 # -------------------------------------------------------------
 # НАСТРОЙКИ: Базовые продукты и кодовое слово
 # -------------------------------------------------------------
-# Список базовых моделей (страна добавится динамически на основе выбора)
 BASE_PRODUCTS = [
     'product:"Dahua IPC-C15"',
     'product:"Dahua IPC-A35"',
@@ -53,7 +52,6 @@ TARGET_CODE_WORD = "Serial Number"
 OUTPUT_FILE = "results.txt"  # Файл, куда будут сохраняться результаты
 # -------------------------------------------------------------
 
-# Глобальные переменные для учетных данных (заполняются в load_or_request_credentials)
 GOOGLE_EMAIL = ""
 GOOGLE_PASSWORD = ""
 
@@ -92,7 +90,7 @@ def step(n, total, msg):
     print(f"\n{C.BOLD}{bar}\n [{n}/{total}] {msg}\n{bar}{C.END}")
 
 
-# ---------- Функция работы с конфигурацией (запоминание данных) ----------
+# ---------- Функция работы с конфигурацией ----------
 
 def load_or_request_credentials():
     global GOOGLE_EMAIL, GOOGLE_PASSWORD
@@ -111,8 +109,6 @@ def load_or_request_credentials():
 
     print(f"\n{C.BOLD}{C.INFO}┌── Настройка учетных данных Google {C.END}")
     GOOGLE_EMAIL = input(f"{C.INFO}│{C.END} {C.BOLD}Введите ваш Email от Google:{C.END} ").strip()
-    
-    # Использование getpass маскирует ввод пароля в терминале (он пишется, но его не видно)
     GOOGLE_PASSWORD = getpass.getpass(f"{C.INFO}└──{C.END} {C.BOLD}Введите ваш Пароль от Google (ввод скрыт):{C.END} ").strip()
     
     try:
@@ -136,22 +132,18 @@ def choose_regions() -> list:
             print(f"{C.DIM}    {C.ERR}[x] Ошибка: Ввод пустой. Страна не обнаружена, проверьте.{C.END}")
             continue
         
-        # Парсинг, очистка и фильтрация строго по 2 буквам (ISO-код)
         regions = []
         for item in user_input.split(","):
             cleaned = item.strip().upper().replace('"', '').replace("'", "")
             if len(cleaned) == 2 and cleaned.isalpha():
                 regions.append(cleaned)
         
-        # Если после фильтрации список пуст (ввели цифры, пробелы или длинные слова)
         if not regions:
             print(f"{C.DIM}    {C.ERR}[x] Ошибка: Валидные ISO-коды не найдены. Страна не обнаружена, проверьте.{C.END}")
             continue
             
-        # Удаляем дубликаты, если одну страну написали дважды
         regions = list(dict.fromkeys(regions))
         
-        # Если всё успешно, выходим из цикла
         countries_str = f"{C.BOLD}{C.OK}" + f"{C.END}, {C.BOLD}{C.OK}".join(regions) + f"{C.END}"
         print(f"{C.DIM}    Успешно установлены целевые зоны: [{countries_str}]{C.END}\n")
         return regions
@@ -159,27 +151,22 @@ def choose_regions() -> list:
 import subprocess
 
 def kill_chrome_zombies():
-    """Мгновенно уничтожает все зомби-процессы ChromeDriver и автоматического Chrome
-    с помощью быстрых системных утилит."""
+    """Мгновенно уничтожает все зомби-процессы ChromeDriver и автоматического Chrome."""
     log("Выполняю мгновенную очистку памяти от процессов автоматизации...", "info")
     system = platform.system()
     
     try:
         if system == "Windows":
-            # /F - принудительно, /T - дерево процессов, /IM - имя образа
-            # Подавляем вывод в консоль через stdout/stderr, чтобы не засорять экран
             subprocess.run(["taskkill", "/F", "/T", "/IM", "chromedriver.exe"], 
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             subprocess.run(["taskkill", "/F", "/T", "/IM", "chrome.exe"], 
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         else:
-            # На Linux / macOS используем быстрый pkill
             subprocess.run(["pkill", "-f", "chromedriver"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             subprocess.run(["pkill", "-f", "chrome"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         log("Память успешно очищена.", "ok")
     except Exception as e:
         log(f"Не удалось принудительно закрыть процессы: {e}", "warn")
-
 
 
 # ---------- очистка повторных префиксов ----------
@@ -197,7 +184,6 @@ def remove_duplicate_prefixes():
         seen_prefixes = set()
         unique_lines = []
 
-        # Регулярка теперь учитывает наличие временной метки в сохраненной строке
         pattern = rf"{re.escape(TARGET_CODE_WORD)}:\s*([A-Za-z0-9_\-]+)"
 
         for line in lines:
@@ -327,8 +313,29 @@ def make_chrome_driver(user_data_dir: str, profile_dir: str):
     options.add_argument("--no-first-run")
     options.add_argument("--no-default-browser-check")
     options.add_argument("--disable-blink-features=AutomationControlled")
+
+    # === Безопасные флаги скорости (профиль не трогают) ===
+    options.add_argument("--disable-background-networking")
+    options.add_argument("--disable-background-timer-throttling")
+    options.add_argument("--disable-backgrounding-occluded-windows")
+    options.add_argument("--disable-renderer-backgrounding")
+    options.add_argument("--disable-hang-monitor")
+    options.add_argument("--disable-sync")
+    options.add_argument("--disable-translate")
+    options.add_argument("--mute-audio")
+
+    # Не ждать картинки/шрифты — работать сразу после DOM
+    options.page_load_strategy = "eager"
+
     options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
     options.add_experimental_option("useAutomationExtension", False)
+
+    # Отключаем картинки (серийники — в тексте, картинки не нужны)
+    options.add_experimental_option("prefs", {
+        "profile.managed_default_content_settings.images": 2,
+        "profile.default_content_setting_values.notifications": 2,
+    })
+
     driver = webdriver.Chrome(options=options)
     try:
         driver.execute_cdp_cmd(
@@ -428,8 +435,6 @@ NEXT_BUTTON_SELECTORS = [
     (By.XPATH, "//button[contains(., 'Next')]")
 ]
 
-# Обновлено: Селектор аккаунта генерируется динамически в функции pick_google_account
-
 SEARCH_SELECTORS = [
     (By.NAME, "query"),
     (By.CSS_SELECTOR, "input[type='search']"),
@@ -443,7 +448,7 @@ def open_shodan(driver):
     driver.get(SHODAN_URL)
     try:
         WebDriverWait(driver, 10).until(
-            lambda d: d.execute_script("return document.readyState") == "complete"
+            lambda d: d.execute_script("return document.readyState") in ("complete", "interactive")
         )
     except TimeoutException:
         log("Страница долго грузится, продолжаю всё равно.", "warn")
@@ -469,7 +474,7 @@ def click_google(driver) -> bool:
 
 
 def pick_google_account(driver) -> bool:
-    time.sleep(1)
+    time.sleep(0.5)
     if "accounts.google" not in driver.current_url:
         return False
 
@@ -482,7 +487,7 @@ def pick_google_account(driver) -> bool:
         next_btn = find_first(driver, NEXT_BUTTON_SELECTORS, timeout=3, label="кнопка Далее (Email)")
         if next_btn:
             click(next_btn, driver)
-            time.sleep(1.5)
+            time.sleep(0.8)
     else:
         dynamic_account_selectors = [
             (By.CSS_SELECTOR, f"div[data-identifier='{GOOGLE_EMAIL}']"),
@@ -493,7 +498,7 @@ def pick_google_account(driver) -> bool:
         account_el = find_first(driver, dynamic_account_selectors, timeout=3, label="аккаунт в списке")
         if account_el:
             click(account_el, driver)
-            time.sleep(1.5)
+            time.sleep(0.8)
 
     password_input = find_first(driver, PASSWORD_INPUT_SELECTORS, timeout=7, label="поле ввода Пароля")
     if password_input:
@@ -516,11 +521,11 @@ def wait_back_on_shodan(driver, timeout=LOGIN_WAIT_SECONDS):
     while time.time() < deadline:
         try:
             if "shodan.io" in driver.current_url and "accounts.google" not in driver.current_url:
-                time.sleep(1)
+                time.sleep(0.5)
                 return True
         except WebDriverException:
             pass
-        time.sleep(1)
+        time.sleep(0.5)
     log("Время ожидания истекло, продолжаю в текущем состоянии.", "warn")
     return False
 
@@ -528,22 +533,15 @@ from datetime import datetime
 
 def save_to_file(query_item, timestamp_value, result_value):
     try:
-        # Приводим к строке и очищаем от пробелов
         ts_str = str(timestamp_value).strip() if timestamp_value else ""
         
-        # Проверяем, что дата вообще есть и она валидна (исправление проверки)
         if ts_str and ts_str not in ["None", "0", "null", "false"]:
             try:
-                #we are delete T to space and filter it for ONLY DAY / MONTH / YEAR
                 date_part = ts_str.replace("T", " ").split(" ")[0]
-                
-                #today - days_ago
-                #and we get how old are serial shodan update
                 parsed_date = datetime.strptime(date_part, "%Y-%m-%d").date()
                 today = datetime.now().date()
                 days_ago = (today - parsed_date).days
                 
-                #formartt
                 if days_ago == 0:
                     age_status = "сегодня"
                 elif days_ago == 1:
@@ -551,24 +549,18 @@ def save_to_file(query_item, timestamp_value, result_value):
                 else:
                     age_status = f"{days_ago} дн. назад"
                 
-                
-                # Записываем в файл строку с датой и расчетом возраста
                 log_string = f"{query_item} [Дата: {date_part} | Возраст: {age_status}] -> {TARGET_CODE_WORD}: {result_value}\n"
                 
             except Exception as parse_err:
-                # Резервный вариант: если формат даты сломался, просто пишем сырой текст, чтобы не потерять серийник
                 log_string = f"{query_item} [{ts_str}] -> {TARGET_CODE_WORD}: {result_value}\n"
         else:
-            # Если даты не было изначально
             log_string = f"{query_item} -> {TARGET_CODE_WORD}: {result_value}\n"
             
-        # Запись в файл
         with open(OUTPUT_FILE, "a", encoding="utf-8") as f:
             f.write(log_string)
             
     except OSError as e:
         log(f"Не удалось записать результат в файл: {e}", "err")
-
 
 
 def process_search_loop(driver, search_items):
@@ -581,7 +573,7 @@ def process_search_loop(driver, search_items):
         
         if "shodan.io" not in driver.current_url:
             driver.get(SHODAN_URL)
-            time.sleep(1)
+            time.sleep(0.5)
             
         el = find_first(driver, SEARCH_SELECTORS, label=f"поле поиска для '{item}'")
         if el is None:
@@ -594,7 +586,15 @@ def process_search_loop(driver, search_items):
         el.submit()
         log(f"Отправил поисковый запрос: '{item}'", "ok")
         
-        time.sleep(1)
+        # Вместо тупого sleep(1) — ждём именно появления результатов
+        # (выходим сразу, как только они готовы)
+        try:
+            WebDriverWait(driver, 6).until(
+                lambda d: d.find_elements(By.CLASS_NAME, "result")
+                          or "no results" in d.page_source.lower()
+            )
+        except TimeoutException:
+            pass
         
         try:
             page_content = driver.page_source
@@ -604,11 +604,9 @@ def process_search_loop(driver, search_items):
             
             if result_blocks:
                 for block in result_blocks:
-                    # Извлекаем timestamp
                     time_match = re.search(r'class="timestamp[^"]*">([^<]+)</div>', block, re.IGNORECASE)
                     timestamp = time_match.group(1).strip() if time_match else None
                     
-                    # Извлекаем серийный номер
                     serial_match = re.search(rf"{re.escape(TARGET_CODE_WORD)}\s*:\s*([A-Za-z0-9_\-]+)", block, re.IGNORECASE)
                     if serial_match:
                         raw_value = str(serial_match.group(1)).strip()
@@ -616,7 +614,7 @@ def process_search_loop(driver, search_items):
                         log(f"РЕЗУЛЬТАТ ДЛЯ '{item}' [{timestamp}] -> {TARGET_CODE_WORD}: {truncated_value}", "ok")
                         save_to_file(item, timestamp, truncated_value)
             else:
-                # Способ 2 (резервный): Если блоки разметки не поддались регулярке, парсим через DOM элементы
+                # Способ 2 (резервный): парсим через DOM элементы
                 results = driver.find_elements(By.CLASS_NAME, "result")
                 if not results:
                     log(f"На странице результатов для '{item}' ничего не найдено.", "warn")
@@ -643,7 +641,7 @@ def process_search_loop(driver, search_items):
             if VERBOSE:
                 traceback.print_exc()
             
-        time.sleep(1)
+        time.sleep(0.3)
 
 
 def main():
@@ -655,7 +653,6 @@ def main():
     args = parser.parse_args()
     VERBOSE = args.verbose
 
-    # Запрашиваем или считываем сохраненные почту и пароль
     load_or_request_credentials()
 
     selected_regions = choose_regions()
@@ -693,7 +690,7 @@ def main():
         step(5, total_steps, "Ищу и жму Login/Account -> Continue with Google")
         if not click_login(driver):
             log("Кнопку логина не нашёл — жду, вдруг вы кликнете сами...", "warn")
-        time.sleep(1)
+        time.sleep(0.5)
         if not click_google(driver):
             log("Кнопку Google не нашёл — жду, вдруг вы кликнете сами...", "warn")
 
@@ -718,9 +715,7 @@ def main():
             traceback.print_exc()
             
     finally:
-        # Сразу жестко чистим систему без долгих ожиданий драйвера
         kill_chrome_zombies()
-        # Быстрый выход из Python, чтобы не висели другие потоки
         os._exit(0) 
 
 
