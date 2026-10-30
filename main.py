@@ -2,7 +2,7 @@
 """
 thx for downloading!
 """
-
+from random import uniform
 import argparse
 import json
 import os
@@ -531,6 +531,470 @@ def wait_back_on_shodan(driver, timeout=LOGIN_WAIT_SECONDS):
 
 from datetime import datetime
 
+
+# ---------- детекция и авто-решение капчи Cloudflare ----------
+
+# ---------- детекция и авто-решение капчи Cloudflare ----------
+
+CLOUDFLARE_MARKERS = [
+    "performing security verification",
+    "just a moment",
+    "checking your browser before accessing",
+    "verifying you are human",
+    "cf-challenge",
+    "cf_chl_opt",
+    "challenge-platform",
+    "this website uses a security service to protect against malicious bots",
+]
+
+
+def is_cloudflare_challenge(driver) -> bool:
+    try:
+        title = (driver.title or "").lower()
+        if "just a moment" in title or "attention required" in title:
+            return True
+        src = (driver.page_source or "").lower()
+        for marker in CLOUDFLARE_MARKERS:
+            if marker in src:
+                return True
+    except WebDriverException:
+        pass
+    return False
+
+
+# JS: ищет в DOM (включая ОТКРЫТЫЕ shadow roots):
+#   1) Turnstile iframe;
+#   2) чекбокс "Verify you are human" — input[type=checkbox] или [role=checkbox].
+# ВНИМАНИЕ: закрытый shadow DOM этим не пробивается — для него есть CDP-клик.
+_TURNSTILE_FIND_JS = r"""
+function deepFind(root, match) {
+  let all;
+  try { all = root.querySelectorAll('*'); } catch (e) { return null; }
+  for (const el of all) {
+    try { if (match(el)) return el; } catch (e) {}
+  }
+  for (const el of all) {
+    if (el.shadowRoot) {
+      const found = deepFind(el.shadowRoot, match);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+// 1) Turnstile-iframe
+const iframeEl = deepFind(document, (el) => {
+  if (el.tagName !== 'IFRAME') return false;
+  const src = (el.src || '').toLowerCase();
+  const title = (el.getAttribute('title') || '').toLowerCase();
+  return src.includes('challenges.cloudflare.com') ||
+         src.includes('turnstile') ||
+         title.includes('cloudflare');
+});
+if (iframeEl) return iframeEl;
+
+// 2) Чекбокс (input или role=checkbox)
+const cbEl = deepFind(document, (el) => {
+  const tag = el.tagName.toLowerCase();
+  const type = (el.type || '').toLowerCase();
+  const role = (el.getAttribute('role') || '').toLowerCase();
+  const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+
+  if (tag === 'input' && type === 'checkbox') {
+    const rect = el.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      if (aria.includes('human') || aria.includes('verify')) return true;
+      let p = el.parentElement;
+      for (let i = 0; i < 8 && p; i++) {
+        if ((p.textContent || '').toLowerCase().includes('verify you are human')) return true;
+        p = p.parentElement;
+      }
+    }
+    return false;
+  }
+
+  if (role === 'checkbox') {
+    const rect = el.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      if (aria.includes('human') || aria.includes('verify')) return true;
+      let p = el.parentElement;
+      for (let i = 0; i < 6 && p; i++) {
+        if ((p.textContent || '').toLowerCase().includes('verify you are human')) return true;
+        p = p.parentElement;
+      }
+    }
+  }
+  return false;
+});
+return cbEl;
+"""
+
+
+# JS-диагностика: что видно на странице сейчас
+_TURNSTILE_DIAG_JS = r"""
+function countShadow(root) {
+  let n = 0;
+  try {
+    const all = root.querySelectorAll('*');
+    for (const el of all) {
+      if (el.shadowRoot) { n++; n += countShadow(el.shadowRoot); }
+    }
+  } catch (e) {}
+  return n;
+}
+function countDeep(root, sel) {
+  let n = 0;
+  try {
+    n += root.querySelectorAll(sel).length;
+    const all = root.querySelectorAll('*');
+    for (const el of all) {
+      if (el.shadowRoot) n += countDeep(el.shadowRoot, sel);
+    }
+  } catch (e) {}
+  return n;
+}
+var bc = document.querySelector('#bcQj6');
+var bcInfo = null;
+if (bc) {
+  var r = bc.getBoundingClientRect();
+  bcInfo = {
+    children: bc.children.length,
+    html_len: (bc.outerHTML || '').length,
+    w: Math.round(r.width),
+    h: Math.round(r.height),
+  };
+}
+return {
+  iframes_deep: countDeep(document, 'iframe'),
+  checkboxes_deep: countDeep(document, 'input[type=checkbox]'),
+  role_checkbox_deep: countDeep(document, '[role=checkbox]'),
+  shadow_roots: countShadow(document),
+  bcQj6: bcInfo,
+  ready_state: document.readyState,
+};
+"""
+
+
+def _find_turnstile_element(driver):
+    try:
+        return driver.execute_script(_TURNSTILE_FIND_JS)
+    except WebDriverException:
+        return None
+
+
+def _diag_turnstile(driver):
+    try:
+        return driver.execute_script(_TURNSTILE_DIAG_JS) or {}
+    except WebDriverException:
+        return {}
+
+
+def _click_checkbox_via_selenium(driver, cb) -> bool:
+    try:
+        cb.click()
+        return True
+    except WebDriverException:
+        pass
+    try:
+        driver.execute_script(
+            "arguments[0].scrollIntoView({block:'center'});"
+            "arguments[0].click();",
+            cb,
+        )
+        return True
+    except WebDriverException:
+        pass
+    try:
+        driver.execute_script(
+            "var el = arguments[0];"
+            "while (el && el.tagName !== 'LABEL') el = el.parentElement;"
+            "if (el) el.click();",
+            cb,
+        )
+        return True
+    except WebDriverException:
+        pass
+    return False
+
+
+def _click_at_cdp(driver, x: float, y: float) -> bool:
+    """Реальный клик мышью через CDP по viewport-координатам."""
+    try:
+        driver.execute_cdp_cmd("Input.dispatchMouseEvent", {
+            "type": "mouseMoved", "x": x, "y": y,
+        })
+        driver.execute_cdp_cmd("Input.dispatchMouseEvent", {
+            "type": "mousePressed", "x": x, "y": y,
+            "button": "left", "clickCount": 1,
+        })
+        driver.execute_cdp_cmd("Input.dispatchMouseEvent", {
+            "type": "mouseReleased", "x": x, "y": y,
+            "button": "left", "clickCount": 1,
+        })
+        return True
+    except WebDriverException:
+        return False
+
+
+def _click_widget_by_coords(driver, element) -> bool:
+    """
+    Клик по координатам внутри элемента — для случая ЗАКРЫТОГО shadow DOM,
+    когда чекбокс виден визуально, но недоступен для Selenium/JS.
+    """
+    try:
+        driver.execute_script(
+            "arguments[0].scrollIntoView({block:'center'});", element
+        )
+        time.sleep(0.3)
+        # getBoundingClientRect() возвращает viewport-координаты —
+        # именно их ждёт CDP Input.dispatchMouseEvent.
+        rect = driver.execute_script(
+            "var r = arguments[0].getBoundingClientRect();"
+            "return {x: r.x, y: r.y, width: r.width, height: r.height};",
+            element,
+        )
+    except WebDriverException:
+        return False
+
+    if not rect:
+        return False
+    w = rect.get("width") or 0
+    h = rect.get("height") or 0
+    if w <= 1 or h <= 1:
+        return False
+
+    # Пробуем: левый край (там обычно чекбокс), центр, чуть выше центра.
+    points = [
+        (rect["x"] + min(20, w * 0.15), rect["y"] + h / 2),
+        (rect["x"] + w / 2,             rect["y"] + h / 2),
+        (rect["x"] + w * 0.5,           rect["y"] + h * 0.35),
+    ]
+    for x, y in points:
+        if _click_at_cdp(driver, x, y):
+            return True
+    return False
+
+
+def _solve_via_iframe(driver, iframe_el) -> bool:
+    """Переключается в iframe и кликает чекбокс. True если клик прошёл."""
+    ready_cb = None
+    try:
+        driver.switch_to.frame(iframe_el)
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            try:
+                cbs = driver.find_elements(By.CSS_SELECTOR, "input[type='checkbox']")
+            except WebDriverException:
+                cbs = []
+            if not cbs:
+                time.sleep(0.3)
+                continue
+            cb = cbs[0]
+            try:
+                if not cb.is_displayed() or not cb.is_enabled():
+                    time.sleep(0.3)
+                    continue
+            except WebDriverException:
+                time.sleep(0.3)
+                continue
+            verifying = False
+            try:
+                for el in driver.find_elements(By.XPATH, "//*[contains(text(), 'Verifying')]"):
+                    if el.is_displayed():
+                        verifying = True
+                        break
+            except WebDriverException:
+                pass
+            if verifying:
+                time.sleep(0.3)
+                continue
+            ready_cb = cb
+            break
+        if ready_cb is not None:
+            if _click_checkbox_via_selenium(driver, ready_cb):
+                log("Кликнул по чекбоксу (внутри iframe).", "ok")
+                return True
+    except WebDriverException:
+        pass
+    finally:
+        try:
+            driver.switch_to.default_content()
+        except WebDriverException:
+            pass
+    return False
+
+
+def auto_solve_cloudflare_checkbox(driver, timeout=90) -> bool:
+    """
+    Пытается автоматически пройти Cloudflare Turnstile. Порядок попыток:
+      1) JS-поиск iframe / чекбокса (включая ОТКРЫТЫЕ shadow roots);
+      2) Selenium-поиск input[type=checkbox] на случай, если JS-диагностика
+         что-то упустила;
+      3) Реальный клик мышью по координатам #bcQj6 — для случая ЗАКРЫТОГО
+         shadow DOM, когда чекбокс виден визуально, но не в DOM.
+    """
+    log("Обнаружена защита Cloudflare. Пробую решить автоматически...", "info")
+    start = time.time()
+    last_log = 0.0
+    last_click_at = 0.0
+    clicked_count = 0
+    bc_first_seen = None
+    max_clicks = 20
+
+    while time.time() - start < timeout:
+        if not is_cloudflare_challenge(driver):
+            log(f"Cloudflare пройден за {time.time() - start:.1f}s (кликов: {clicked_count}).", "ok")
+            return True
+
+        # --- 1) JS-поиск (iframe / input / role=checkbox) ---
+        el = _find_turnstile_element(driver)
+        if el is not None and clicked_count < max_clicks:
+            try:
+                tag = (el.tag_name or "").lower()
+            except WebDriverException:
+                tag = ""
+
+            if tag == "iframe":
+                log("Нашёл Turnstile-iframe.", "ok")
+                if _solve_via_iframe(driver, el):
+                    clicked_count += 1
+                    last_click_at = time.time()
+                time.sleep(0.5)
+                continue
+            elif tag in ("input", "div", "button", "span"):
+                log(f"Нашёл элемент чекбокса ({tag}).", "ok")
+                if _click_checkbox_via_selenium(driver, el):
+                    clicked_count += 1
+                    last_click_at = time.time()
+                time.sleep(0.5)
+                continue
+
+        # --- 2) Selenium-fallback ---
+        clicked_this_round = False
+        if clicked_count < max_clicks:
+            try:
+                sel_cbs = driver.find_elements(By.CSS_SELECTOR, "input[type=checkbox]")
+            except WebDriverException:
+                sel_cbs = []
+            for cb in sel_cbs:
+                try:
+                    if cb.is_displayed() and cb.is_enabled():
+                        if _click_checkbox_via_selenium(driver, cb):
+                            log("Кликнул по чекбоксу (Selenium fallback).", "ok")
+                            clicked_count += 1
+                            last_click_at = time.time()
+                            clicked_this_round = True
+                            break
+                except WebDriverException:
+                    continue
+        if clicked_this_round:
+            time.sleep(0.5)
+            continue
+
+        # --- 3) Координатный клик по #bcQj6 (закрытый shadow DOM) ---
+        try:
+            bc = driver.find_element(By.CSS_SELECTOR, "#bcQj6")
+            if bc.is_displayed():
+                now = time.time()
+                if bc_first_seen is None:
+                    bc_first_seen = now
+                    try:
+                        html = bc.get_attribute("outerHTML") or ""
+                        log(f"#bcQj6 найден. outerHTML len={len(html)}. "
+                            f"Если len не растёт и кликов в DOM не видно — это "
+                            f"закрытый shadow DOM, будем кликать по координатам.",
+                            "info")
+                    except WebDriverException:
+                        pass
+                # Ждём ~8 сек, чтобы виджет успел отрисоваться
+                if now - bc_first_seen >= 8:
+                    if clicked_count < max_clicks and now - last_click_at >= 3:
+                        if _click_widget_by_coords(driver, bc):
+                            clicked_count += 1
+                            last_click_at = now
+                            log(f"Кликнул по координатам #bcQj6 (попытка {clicked_count}).", "ok")
+        except (WebDriverException, NoSuchElementException):
+            pass
+
+        # --- Диагностика раз в 5 сек ---
+        now = time.time()
+        if now - last_log >= 5:
+            diag = _diag_turnstile(driver)
+            bc_info = diag.get("bcQj6") or {}
+            log(
+                f"Ищу Turnstile... ({now - start:.0f}s/{timeout}s) "
+                f"| iframes={diag.get('iframes_deep', '?')} "
+                f"checkboxes={diag.get('checkboxes_deep', '?')} "
+                f"roles={diag.get('role_checkbox_deep', '?')} "
+                f"shadow={diag.get('shadow_roots', '?')} "
+                f"bcQj6={'да' if bc_info else 'нет'}"
+                + (f"(ch={bc_info.get('children')},"
+                   f"html={bc_info.get('html_len')},"
+                   f"{bc_info.get('w')}x{bc_info.get('h')})" if bc_info else "")
+                + f" кликов={clicked_count}",
+                "info",
+            )
+            last_log = now
+
+        time.sleep(0.5)
+
+    log(f"Авто-решение Cloudflare не удалось за {timeout}s (кликов: {clicked_count}).", "warn")
+    return False
+
+
+def wait_for_cloudflare_solved(driver, timeout=None) -> bool:
+    """Fallback: ждёт, пока пользователь вручную решит капчу."""
+    log("Ожидаю РУЧНОГО решения капчи Cloudflare в окне браузера...", "warn")
+    start = time.time()
+    last_log = start
+    while True:
+        try:
+            if not is_cloudflare_challenge(driver):
+                time.sleep(1.0)
+                if not is_cloudflare_challenge(driver):
+                    log(f"Капча решена вручную за {time.time() - start:.1f}s. Продолжаю.", "ok")
+                    return True
+        except WebDriverException:
+            pass
+
+        now = time.time()
+        if now - last_log >= 30:
+            log(f"Всё ещё жду решения капчи... прошло {now - start:.0f}s", "info")
+            last_log = now
+
+        if timeout and (now - start) > timeout:
+            log(f"Таймаут ожидания капчи ({timeout}s).", "err")
+            return False
+        time.sleep(1.0)
+
+
+def ensure_no_cloudflare(driver) -> bool:
+    """
+    Единая точка: если есть Cloudflare — пробует авто-решение (до 90 сек),
+    при неудаче ждёт ручного. Возвращает True, если челлендж снят.
+    """
+    if not is_cloudflare_challenge(driver):
+        return True
+
+    if auto_solve_cloudflare_checkbox(driver, timeout=90):
+        return True
+
+    log("Авто-решение не сработало, жду ручного подтверждения капчи.", "warn")
+    return wait_for_cloudflare_solved(driver)
+
+
+def _has_search_results(driver) -> bool:
+    """True, если на странице есть блоки результатов или надпись 'no results'."""
+    try:
+        if driver.find_elements(By.CLASS_NAME, "result"):
+            return True
+        if "no results" in (driver.page_source or "").lower():
+            return True
+    except WebDriverException:
+        pass
+    return False
+
+
 def save_to_file(query_item, timestamp_value, result_value):
     try:
         ts_str = str(timestamp_value).strip() if timestamp_value else ""
@@ -566,82 +1030,130 @@ def save_to_file(query_item, timestamp_value, result_value):
 def process_search_loop(driver, search_items):
     """
     Последовательно выполняет поиск, извлекает временную метку (timestamp) устройства
-    и кодовое слово (Serial Number).
+    и кодовое слово (Serial Number). При появлении капчи Cloudflare — пытается
+    решить автоматически, при неудаче ждёт ручного решения, затем продолжает
+    с ТОГО ЖЕ элемента (без пропусков).
     """
-    for idx, item in enumerate(search_items, 1):
-        log(f"Начинаю обработку элемента [{idx}/{len(search_items)}]: '{item}'")
-        
-        if "shodan.io" not in driver.current_url:
-            driver.get(SHODAN_URL)
-            time.sleep(0.5)
-            
-        el = find_first(driver, SEARCH_SELECTORS, label=f"поле поиска для '{item}'")
-        if el is None:
-            log(f"Не удалось найти поисковую строку для элемента '{item}', пропускаю.", "err")
-            continue
-            
-        click(el, driver)
-        el.clear()
-        el.send_keys(item)
-        el.submit()
-        log(f"Отправил поисковый запрос: '{item}'", "ok")
-        
-        # Вместо тупого sleep(1) — ждём именно появления результатов
-        # (выходим сразу, как только они готовы)
-        try:
-            WebDriverWait(driver, 6).until(
-                lambda d: d.find_elements(By.CLASS_NAME, "result")
-                          or "no results" in d.page_source.lower()
-            )
-        except TimeoutException:
-            pass
-        
-        try:
-            page_content = driver.page_source
-            
-            # Находим все блоки с классом result
-            result_blocks = re.findall(r'<div class="result">.*?</div>\s*</div>\s*</div>', page_content, re.DOTALL)
-            
-            if result_blocks:
-                for block in result_blocks:
-                    time_match = re.search(r'class="timestamp[^"]*">([^<]+)</div>', block, re.IGNORECASE)
-                    timestamp = time_match.group(1).strip() if time_match else None
-                    
-                    serial_match = re.search(rf"{re.escape(TARGET_CODE_WORD)}\s*:\s*([A-Za-z0-9_\-]+)", block, re.IGNORECASE)
-                    if serial_match:
-                        raw_value = str(serial_match.group(1)).strip()
-                        truncated_value = raw_value[:10]
-                        log(f"РЕЗУЛЬТАТ ДЛЯ '{item}' [{timestamp}] -> {TARGET_CODE_WORD}: {truncated_value}", "ok")
-                        save_to_file(item, timestamp, truncated_value)
-            else:
-                # Способ 2 (резервный): парсим через DOM элементы
-                results = driver.find_elements(By.CLASS_NAME, "result")
-                if not results:
-                    log(f"На странице результатов для '{item}' ничего не найдено.", "warn")
+    idx = 0
+    total = len(search_items)
+    while idx < total:
+        item = search_items[idx]
+        log(f"Начинаю обработку элемента [{idx + 1}/{total}]: '{item}'")
+
+        captcha_retries = 0
+        max_captcha_retries = 15  # предохранитель от бесконечного цикла
+
+        while True:  # цикл повторов одного и того же item при капче
+            if "shodan.io" not in driver.current_url:
+                driver.get(SHODAN_URL)
+                time.sleep(uniform(0.2, 0.5))
+
+            # Капча могла встретиться ещё до ввода запроса
+            if is_cloudflare_challenge(driver):
+                if captcha_retries >= max_captcha_retries:
+                    log(f"Слишком много капч для '{item}', пропускаю.", "err")
+                    break
+                captcha_retries += 1
+                ensure_no_cloudflare(driver)
+                continue
+
+            el = find_first(driver, SEARCH_SELECTORS, label=f"поле поиска для '{item}'")
+            if el is None:
+                log(f"Не удалось найти поисковую строку для элемента '{item}', пропускаю.", "err")
+                break
+
+            click(el, driver)
+            el.clear()
+            el.send_keys(item)
+            el.submit()
+            log(f"Отправил поисковый запрос: '{item}'", "ok")
+
+            # Ждём либо результаты, либо капчу (до ~8 сек)
+            deadline = time.time() + 8
+            captcha_detected = False
+            while time.time() < deadline:
+                if is_cloudflare_challenge(driver):
+                    captcha_detected = True
+                    break
+                if _has_search_results(driver):
+                    break
+                time.sleep(0.2)
+
+            # Обработка капчи после отправки запроса
+            if captcha_detected or is_cloudflare_challenge(driver):
+                if captcha_retries >= max_captcha_retries:
+                    log(f"Слишком много капч для '{item}', пропускаю.", "err")
+                    break
+                captcha_retries += 1
+                ensure_no_cloudflare(driver)
+                time.sleep(1.0)  # дать странице дорисоваться после челленджа
+
+                # Если после решения капчи результатов нет — повторяем тот же запрос
+                if not _has_search_results(driver):
+                    log(f"Результатов после капчи нет — повторяю запрос '{item}'.", "info")
                     continue
-                
-                for res_el in results:
-                    try:
-                        ts_el = res_el.find_element(By.CLASS_NAME, "timestamp")
-                        timestamp = ts_el.text.strip()
-                    except NoSuchElementException:
-                        timestamp = None
-                        
-                    text = res_el.text
-                    if TARGET_CODE_WORD.lower() in text.lower():
-                        match = re.search(rf"{re.escape(TARGET_CODE_WORD)}\s*:\s*([A-Za-z0-9_\-]+)", text, re.IGNORECASE)
-                        if match:
-                            raw_value = str(match.group(1)).strip()
+                # иначе падаем в парсинг ниже
+
+            try:
+                page_content = driver.page_source
+
+                # Находим все блоки с классом result
+                result_blocks = re.findall(
+                    r'<div class="result">.*?</div>\s*</div>\s*</div>',
+                    page_content, re.DOTALL,
+                )
+
+                if result_blocks:
+                    for block in result_blocks:
+                        time_match = re.search(
+                            r'class="timestamp[^"]*">([^<]+)</div>',
+                            block, re.IGNORECASE,
+                        )
+                        timestamp = time_match.group(1).strip() if time_match else None
+
+                        serial_match = re.search(
+                            rf"{re.escape(TARGET_CODE_WORD)}\s*:\s*([A-Za-z0-9_\-]+)",
+                            block, re.IGNORECASE,
+                        )
+                        if serial_match:
+                            raw_value = str(serial_match.group(1)).strip()
                             truncated_value = raw_value[:10]
-                            log(f"РЕЗУЛЬТАТ (резервный) ДЛЯ '{item}' [{timestamp}] -> {TARGET_CODE_WORD}: {truncated_value}", "ok")
+                            log(f"РЕЗУЛЬТАТ ДЛЯ '{item}' [{timestamp}] -> {TARGET_CODE_WORD}: {truncated_value}", "ok")
                             save_to_file(item, timestamp, truncated_value)
-                
-        except Exception as e:
-            log(f"Ошибка при парсинге страницы для '{item}': {e}", "err")
-            if VERBOSE:
-                traceback.print_exc()
-            
-        time.sleep(0.3)
+                else:
+                    # Способ 2 (резервный): парсим через DOM элементы
+                    results = driver.find_elements(By.CLASS_NAME, "result")
+                    if not results:
+                        log(f"На странице результатов для '{item}' ничего не найдено.", "warn")
+                    else:
+                        for res_el in results:
+                            try:
+                                ts_el = res_el.find_element(By.CLASS_NAME, "timestamp")
+                                timestamp = ts_el.text.strip()
+                            except NoSuchElementException:
+                                timestamp = None
+
+                            text = res_el.text
+                            if TARGET_CODE_WORD.lower() in text.lower():
+                                match = re.search(
+                                    rf"{re.escape(TARGET_CODE_WORD)}\s*:\s*([A-Za-z0-9_\-]+)",
+                                    text, re.IGNORECASE,
+                                )
+                                if match:
+                                    raw_value = str(match.group(1)).strip()
+                                    truncated_value = raw_value[:10]
+                                    log(f"РЕЗУЛЬТАТ (резервный) ДЛЯ '{item}' [{timestamp}] -> {TARGET_CODE_WORD}: {truncated_value}", "ok")
+                                    save_to_file(item, timestamp, truncated_value)
+
+            except Exception as e:
+                log(f"Ошибка при парсинге страницы для '{item}': {e}", "err")
+                if VERBOSE:
+                    traceback.print_exc()
+
+            break  # элемент успешно обработан — выходим из цикла повторов
+
+        idx += 1
+        uniform(0.2, 0.4)
 
 
 def main():
@@ -686,6 +1198,10 @@ def main():
     try:
         step(4, total_steps, "Открываю Shodan")
         open_shodan(driver)
+
+        # Если Cloudflare выскочил прямо на старте — разбираемся
+        if is_cloudflare_challenge(driver):
+            ensure_no_cloudflare(driver)
 
         step(5, total_steps, "Ищу и жму Login/Account -> Continue with Google")
         if not click_login(driver):
